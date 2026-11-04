@@ -14,10 +14,13 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { useAuth } from "@/context/auth";
 import { useDataSource } from "@/context/data-source";
+import { useBranches } from "@/hooks/use-branches";
 import { useCallSummary, useCalls, useExportCalls } from "@/hooks/use-calls";
-import { useCounselors } from "@/hooks/use-users";
+import { useUsers } from "@/hooks/use-users";
 import { formatDateTime } from "@/lib/leads-format";
+import { useDebouncedValue } from "@/lib/use-debounced-value";
 import { cn } from "@/lib/utils";
 import type { CallDirection, CallFilterParams } from "@/types/calls";
 
@@ -78,15 +81,6 @@ function formatMMSS(totalSeconds: number) {
   const m = Math.floor(totalSeconds / 60);
   const s = totalSeconds % 60;
   return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
-}
-
-function useDebounced<T>(value: T, delay = 300) {
-  const [debounced, setDebounced] = useState(value);
-  useEffect(() => {
-    const id = setTimeout(() => setDebounced(value), delay);
-    return () => clearTimeout(id);
-  }, [value, delay]);
-  return debounced;
 }
 
 type SortField = "call_timestamp" | "duration_seconds";
@@ -181,6 +175,8 @@ function StatCard({
 
 export default function CallsPage() {
   const { isMock } = useDataSource();
+  const { user: me } = useAuth();
+  const isStaff = Boolean(me?.is_staff || me?.is_superuser);
   const [sp, setSp] = useSearchParams();
 
   // Everything the table shows lives in the URL, so a reload or a shared link gives the same view.
@@ -188,6 +184,8 @@ export default function CallsPage() {
   const dirParam = sp.get("direction");
   const direction: CallDirection | "" = dirParam === "inbound" || dirParam === "outbound" ? dirParam : "";
   const user = sp.get("user") ?? "";
+  // Only staff can pick a branch; everyone else is already limited to their own by the backend.
+  const branch = isStaff ? (sp.get("branch") ?? "") : "";
   const rangeParam = sp.get("range");
   const range: RangeKey = RANGES.some((r) => r.value === rangeParam) ? (rangeParam as RangeKey) : "all";
   const from = sp.get("from") ?? "";
@@ -215,7 +213,7 @@ export default function CallsPage() {
 
   // The box shows what you type right away; the URL (and the request) follow 300 ms later.
   const [searchText, setSearchText] = useState(q);
-  const debouncedText = useDebounced(searchText);
+  const debouncedText = useDebouncedValue(searchText);
   const pushedQ = useRef(q);
   useEffect(() => {
     if (q !== pushedQ.current) {
@@ -230,8 +228,14 @@ export default function CallsPage() {
     }
   }, [debouncedText, update]);
 
-  const counselorsQ = useCounselors("", undefined, !isMock);
-  const userOptions = (counselorsQ.data?.results ?? []).map((u) => ({
+  const branchesQ = useBranches(1, 100, "", isStaff);
+  const branchOptions = (branchesQ.data?.results ?? []).map((b) => ({
+    value: String(b.id),
+    label: b.name,
+  }));
+  // Everyone who can log calls, narrowed to the chosen branch when there is one.
+  const usersQ = useUsers(1, 100, "", branch ? Number(branch) : undefined);
+  const userOptions = (usersQ.data?.results ?? []).map((u) => ({
     value: String(u.id),
     label: u.name,
   }));
@@ -242,10 +246,11 @@ export default function CallsPage() {
       search: q || undefined,
       direction: direction || undefined,
       created_by: user ? Number(user) : undefined,
+      branch_id: branch ? Number(branch) : undefined,
       call_timestamp__gte: gte,
       call_timestamp__lte: lte,
     };
-  }, [q, direction, user, range, from, to]);
+  }, [q, direction, user, branch, range, from, to]);
 
   const callsQ = useCalls({ ...filters, page, page_size: PAGE_SIZE, ordering });
   const summaryQ = useCallSummary(filters);
@@ -256,7 +261,7 @@ export default function CallsPage() {
   const totalPages = Math.max(1, Math.ceil(count / PAGE_SIZE));
   const firstShown = count === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
   const lastShown = Math.min(count, page * PAGE_SIZE);
-  const hasFilters = Boolean(q || direction || user || range !== "all");
+  const hasFilters = Boolean(q || direction || user || branch || range !== "all");
   const summary = summaryQ.data;
   const days = fillDays(summary?.by_day ?? []);
   const busiest = days.reduce((best, d) => (d.calls > best.calls ? d : best), days[0] ?? { date: "", calls: 0 });
@@ -383,6 +388,24 @@ export default function CallsPage() {
             onChange={(e) => setSearchText(e.target.value)}
           />
         </div>
+        {isStaff && (
+          <Select
+            value={branch || "all"}
+            onValueChange={(v) => update({ branch: v === "all" ? undefined : v, user: undefined })}
+          >
+            <SelectTrigger className="w-44" aria-label="Branch">
+              <SelectValue placeholder="All branches" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All branches</SelectItem>
+              {branchOptions.map((b) => (
+                <SelectItem key={b.value} value={b.value}>
+                  {b.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
         <Select
           value={direction || "all"}
           onValueChange={(v) => update({ direction: v === "all" ? undefined : v })}
