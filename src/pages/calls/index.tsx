@@ -22,7 +22,8 @@ import { useUsers } from "@/hooks/use-users";
 import { formatDateTime } from "@/lib/leads-format";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 import { cn } from "@/lib/utils";
-import type { CallDirection, CallFilterParams } from "@/types/calls";
+import { CallDetailSheet, RecordingLink } from "@/pages/calls/call-detail-sheet";
+import type { CallDirection, CallFilterParams, CallRow } from "@/types/calls";
 
 const PAGE_SIZE = 20;
 const DEFAULT_SORT = "-call_timestamp";
@@ -255,6 +256,7 @@ export default function CallsPage() {
   const callsQ = useCalls({ ...filters, page, page_size: PAGE_SIZE, ordering });
   const summaryQ = useCallSummary(filters);
   const exportCalls = useExportCalls();
+  const [selected, setSelected] = useState<CallRow | null>(null);
 
   const rows = callsQ.data?.results ?? [];
   const count = callsQ.data?.count ?? 0;
@@ -527,7 +529,19 @@ export default function CallsPage() {
                 </TableRow>
               )}
               {rows.map((c) => (
-                <TableRow key={c.id}>
+                <TableRow
+                  key={c.id}
+                  tabIndex={0}
+                  className="focus-visible:ring-ring cursor-pointer focus-visible:ring-2 focus-visible:outline-none focus-visible:ring-inset"
+                  onClick={() => setSelected(c)}
+                  onKeyDown={(e) => {
+                    if (e.target !== e.currentTarget) return; // ignore keys pressed on the links inside
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setSelected(c);
+                    }
+                  }}
+                >
                   <TableCell className="text-muted-foreground whitespace-nowrap">
                     {formatDateTime(c.call_timestamp)}
                   </TableCell>
@@ -537,7 +551,11 @@ export default function CallsPage() {
                     </Badge>
                   </TableCell>
                   <TableCell>
-                    <Link to={`/leads/${c.lead}`} className="font-semibold hover:underline">
+                    <Link
+                      to={`/leads/${c.lead}`}
+                      className="font-semibold hover:underline"
+                      onClick={(e) => e.stopPropagation()}
+                    >
                       {c.lead_name}
                     </Link>
                     <p className="text-muted-foreground font-mono text-xs">{c.lead_reference_number}</p>
@@ -547,18 +565,7 @@ export default function CallsPage() {
                   <TableCell className="tabular-nums">{c.duration_formatted}</TableCell>
                   <TableCell className="capitalize">{c.outcome || "—"}</TableCell>
                   <TableCell>
-                    {c.recording_url ? (
-                      <a
-                        href={c.recording_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-brand underline"
-                      >
-                        Listen
-                      </a>
-                    ) : (
-                      <span className="text-muted-foreground">—</span>
-                    )}
+                    <RecordingLink url={c.recording_url} />
                   </TableCell>
                 </TableRow>
               ))}
@@ -593,6 +600,8 @@ export default function CallsPage() {
           </Button>
         </div>
       </div>
+
+      <CallDetailSheet call={selected} onClose={() => setSelected(null)} />
     </div>
   );
 }
