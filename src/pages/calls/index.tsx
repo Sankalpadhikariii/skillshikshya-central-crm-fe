@@ -1,6 +1,7 @@
 import { ArrowDown, ArrowUp, ArrowUpDown, Download, Phone, Search } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
+import { HBarList, MiniBars } from "@/components/charts";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -118,6 +119,42 @@ function SortHead({
   );
 }
 
+/** Every day from the first to the last day with calls, so quiet days show as short bars. */
+function fillDays(byDay: { date: string; calls: number }[]) {
+  if (byDay.length === 0) return [];
+  const first = byDay[0].date;
+  const last = byDay[byDay.length - 1].date;
+  const span = (Date.parse(`${last}T00:00:00Z`) - Date.parse(`${first}T00:00:00Z`)) / 86_400_000;
+  if (span > 90) return byDay; // too long to draw every day
+  const counts = new Map(byDay.map((d) => [d.date, d.calls]));
+  return Array.from({ length: span + 1 }, (_, i) => {
+    const date = addDays(first, i);
+    return { date, calls: counts.get(date) ?? 0 };
+  });
+}
+
+function shortDay(day: string) {
+  return new Date(`${day}T00:00:00Z`).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    timeZone: "UTC",
+  });
+}
+
+function Panel({ title, hint, children }: { title: string; hint: string; children: React.ReactNode }) {
+  return (
+    <section className="bg-card rounded-2xl border p-4">
+      <h2 className="text-sm font-semibold">{title}</h2>
+      <p className="text-muted-foreground mb-3 text-xs">{hint}</p>
+      {children}
+    </section>
+  );
+}
+
+function NoCalls() {
+  return <p className="text-muted-foreground py-6 text-center text-sm">No calls in this period.</p>;
+}
+
 function StatCard({
   label,
   value,
@@ -221,6 +258,9 @@ export default function CallsPage() {
   const lastShown = Math.min(count, page * PAGE_SIZE);
   const hasFilters = Boolean(q || direction || user || range !== "all");
   const summary = summaryQ.data;
+  const days = fillDays(summary?.by_day ?? []);
+  const busiest = days.reduce((best, d) => (d.calls > best.calls ? d : best), days[0] ?? { date: "", calls: 0 });
+  const callers = (summary?.by_user ?? []).map((u) => ({ label: u.name, value: u.calls }));
 
   function toggleSort(field: SortField) {
     update({ sort: ordering === field ? `-${field}` : field });
@@ -294,6 +334,43 @@ export default function CallsPage() {
           </button>
         </p>
       )}
+
+      <div className="grid gap-3 lg:grid-cols-2">
+        <Panel
+          title="Calls per day"
+          hint={days.length > 0 ? `Busiest: ${shortDay(busiest.date)} with ${busiest.calls} calls` : "Days are counted in Nepal time"}
+        >
+          {summaryQ.isPending ? (
+            <Skeleton className="h-24 w-full" />
+          ) : days.length === 0 ? (
+            <NoCalls />
+          ) : (
+            <div
+              role="img"
+              aria-label={`Calls per day from ${shortDay(days[0].date)} to ${shortDay(days[days.length - 1].date)}. Busiest day ${shortDay(busiest.date)} with ${busiest.calls} calls.`}
+            >
+              <MiniBars values={days.map((d) => d.calls)} />
+              <div className="text-muted-foreground mt-2 flex justify-between text-xs">
+                <span>{shortDay(days[0].date)}</span>
+                <span>{shortDay(days[days.length - 1].date)}</span>
+              </div>
+            </div>
+          )}
+        </Panel>
+        <Panel title="Top callers" hint="By number of calls, top 10">
+          {summaryQ.isPending ? (
+            <div className="space-y-2">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <Skeleton key={i} className="h-6 w-full" />
+              ))}
+            </div>
+          ) : callers.length === 0 ? (
+            <NoCalls />
+          ) : (
+            <HBarList data={callers} />
+          )}
+        </Panel>
+      </div>
 
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative max-w-sm min-w-[13rem] flex-1">
